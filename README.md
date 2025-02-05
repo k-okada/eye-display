@@ -54,3 +54,18 @@ You can control pupil position by publish a message to "/serial_node/look_at" to
 ```bash
 rostopic pub -1 /serial_node/look_at geometry_msgs/Point "{x: 1.0, y: 1.0, z: 0.0}"
 ```
+
+The following table shows the correspondence between the data and the emotional expression of the eyes.
+| data | emotion |
+|---|---|
+|0| normal |
+|1| blink |
+|2| surprised |
+|3| sleepy |
+|4| angry |
+|5| sad |
+|6| happy |
+|7| troubled |
+|8| very happy |
+|9| expecting |
+
