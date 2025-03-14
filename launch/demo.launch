@@ -7,7 +7,7 @@
     <arg name="debug" default="false"/>
 
     <node
-        pkg="rosserial_python"
+        pkg="eye_display"
         type="serial_node.py"
         name="eye_display"
         output="screen"
