@@ -36,11 +36,14 @@
 #define ROS_NODE_HANDLE_H_
 
 #include <stdint.h>
+#include <stdarg.h>
 
 #include "std_msgs/Time.h"
 #include "rosserial_msgs/TopicInfo.h"
 #include "rosserial_msgs/Log.h"
-#include "rosserial_msgs/RequestParam.h"
+#include "eye_display/RequestParam.h"
+#include "eye_display/KeyValue.h"
+#include "eye_display/KeyValueArray.h"
 
 #include "ros/msg.h"
 
@@ -67,6 +70,8 @@ namespace ros
 const int SPIN_OK = 0;
 const int SPIN_ERR = -1;
 const int SPIN_TIMEOUT = -2;
+const int SPIN_TX_STOP_REQUESTED = -3;
+const int SPIN_TIME_RECV = -4;
 
 const uint8_t SYNC_SECONDS  = 5;
 const uint8_t MODE_FIRST_FF = 0;
@@ -104,52 +109,27 @@ template<class Hardware,
 class NodeHandle_ : public NodeHandleBase_
 {
 protected:
-  Hardware hardware_;
+  Hardware hardware_{};
 
   /* time used for syncing */
-  uint32_t rt_time;
+  uint32_t rt_time{0};
 
   /* used for computing current time */
-  uint32_t sec_offset, nsec_offset;
+  uint32_t sec_offset{0}, nsec_offset{0};
 
   /* Spinonce maximum work timeout */
-  uint32_t spin_timeout_;
+  uint32_t spin_timeout_{0};
 
-  uint8_t message_in[INPUT_SIZE];
-  uint8_t message_out[OUTPUT_SIZE];
+  uint8_t message_in[INPUT_SIZE] = {0};
+  uint8_t message_out[OUTPUT_SIZE] = {0};
 
-  Publisher * publishers[MAX_PUBLISHERS];
-  Subscriber_ * subscribers[MAX_SUBSCRIBERS];
+  Publisher * publishers[MAX_PUBLISHERS] = {nullptr};
+  Subscriber_ * subscribers[MAX_SUBSCRIBERS] {nullptr};
 
   /*
    * Setup Functions
    */
 public:
-  NodeHandle_() : configured_(false)
-  {
-
-    for (unsigned int i = 0; i < MAX_PUBLISHERS; i++)
-      publishers[i] = 0;
-
-    for (unsigned int i = 0; i < MAX_SUBSCRIBERS; i++)
-      subscribers[i] = 0;
-
-    for (unsigned int i = 0; i < INPUT_SIZE; i++)
-      message_in[i] = 0;
-
-    for (unsigned int i = 0; i < OUTPUT_SIZE; i++)
-      message_out[i] = 0;
-
-    req_param_resp.ints_length = 0;
-    req_param_resp.ints = NULL;
-    req_param_resp.floats_length = 0;
-    req_param_resp.floats = NULL;
-    req_param_resp.ints_length = 0;
-    req_param_resp.ints = NULL;
-
-    spin_timeout_ = 0;
-  }
-
   Hardware* getHardware()
   {
     return &hardware_;
@@ -189,19 +169,19 @@ public:
   }
 
 protected:
-  //State machine variables for spinOnce
-  int mode_;
-  int bytes_;
-  int topic_;
-  int index_;
-  int checksum_;
+  // State machine variables for spinOnce
+  int mode_{0};
+  int bytes_{0};
+  int topic_{0};
+  int index_{0};
+  int checksum_{0};
 
-  bool configured_;
+  bool configured_{false};
 
   /* used for syncing the time */
-  uint32_t last_sync_time;
-  uint32_t last_sync_receive_time;
-  uint32_t last_msg_timeout_time;
+  uint32_t last_sync_time{0};
+  uint32_t last_sync_receive_time{0};
+  uint32_t last_msg_timeout_time{0};
 
 public:
   /* This function goes in your loop() function, it handles
@@ -209,7 +189,7 @@ public:
    */
 
 
-  virtual int spinOnce()
+  virtual int spinOnce() override
   {
     /* restart if timed out */
     uint32_t c_time = hardware_.time();
@@ -226,6 +206,9 @@ public:
         mode_ = MODE_FIRST_FF;
       }
     }
+
+    bool tx_stop_requested = false;
+    bool saw_time_msg = false;
 
     /* while available buffer, read data */
     while (true)
@@ -328,16 +311,18 @@ public:
           }
           else if (topic_ == TopicInfo::ID_TIME)
           {
+            saw_time_msg = true;
             syncTime(message_in);
           }
           else if (topic_ == TopicInfo::ID_PARAMETER_REQUEST)
           {
             req_param_resp.deserialize(message_in);
-            param_recieved = true;
+            param_received = true;
           }
           else if (topic_ == TopicInfo::ID_TX_STOP)
           {
             configured_ = false;
+            tx_stop_requested = true;
           }
           else
           {
@@ -355,12 +340,12 @@ public:
       last_sync_time = c_time;
     }
 
-    return SPIN_OK;
+    return saw_time_msg ? SPIN_TIME_RECV : (tx_stop_requested ? SPIN_TX_STOP_REQUESTED : SPIN_OK);
   }
 
 
   /* Are we connected to the PC? */
-  virtual bool connected()
+  virtual bool connected() override
   {
     return configured_;
   };
@@ -399,7 +384,7 @@ public:
     return current_time;
   }
 
-  void setNow(Time & new_now)
+  void setNow(const Time & new_now)
   {
     uint32_t ms = hardware_.time();
     sec_offset = new_now.sec - ms / 1000 - 1;
@@ -428,14 +413,13 @@ public:
   }
 
   /* Register a new subscriber */
-  template<typename SubscriberT>
-  bool subscribe(SubscriberT& s)
+  bool subscribe(Subscriber_& s)
   {
     for (int i = 0; i < MAX_SUBSCRIBERS; i++)
     {
       if (subscribers[i] == 0) // empty slot
       {
-        subscribers[i] = static_cast<Subscriber_*>(&s);
+        subscribers[i] = &s;
         s.id_ = i + 100;
         return true;
       }
@@ -448,16 +432,8 @@ public:
   bool advertiseService(ServiceServer<MReq, MRes, ObjT>& srv)
   {
     bool v = advertise(srv.pub);
-    for (int i = 0; i < MAX_SUBSCRIBERS; i++)
-    {
-      if (subscribers[i] == 0) // empty slot
-      {
-        subscribers[i] = static_cast<Subscriber_*>(&srv);
-        srv.id_ = i + 100;
-        return v;
-      }
-    }
-    return false;
+    bool w = subscribe(srv);
+    return v && w;
   }
 
   /* Register a new Service Client */
@@ -465,16 +441,8 @@ public:
   bool serviceClient(ServiceClient<MReq, MRes>& srv)
   {
     bool v = advertise(srv.pub);
-    for (int i = 0; i < MAX_SUBSCRIBERS; i++)
-    {
-      if (subscribers[i] == 0) // empty slot
-      {
-        subscribers[i] = static_cast<Subscriber_*>(&srv);
-        srv.id_ = i + 100;
-        return v;
-      }
-    }
-    return false;
+    bool w = subscribe(srv);
+    return v && w;
   }
 
   void negotiateTopics()
@@ -508,7 +476,7 @@ public:
     configured_ = true;
   }
 
-  virtual int publish(int id, const Msg * msg)
+  virtual int publish(int id, const Msg * msg) override
   {
     if (id >= 100 && !configured_)
       return 0;
@@ -548,7 +516,7 @@ public:
    * Logging
    */
 
-private:
+protected:
   void log(char byte, const char * msg)
   {
     rosserial_msgs::Log l;
@@ -558,43 +526,42 @@ private:
   }
 
 public:
-  void logdebug(const char* msg)
-  {
-    log(rosserial_msgs::Log::ROSDEBUG, msg);
+#define def_log(funcname, byte)                                 \
+  void funcname(const char *format, ...) {                      \
+    char *str;                                                  \
+    va_list args;                                               \
+    va_start(args, format);                                     \
+    if (0 > vasprintf(&str, format, args)) str == NULL;         \
+    va_end(args);                                               \
+    if (str) {                                                  \
+      log(byte, str);                                           \
+      free(str);                                                \
+    } else {                                                    \
+      log(byte, "");                                            \
+    }                                                           \
   }
-  void loginfo(const char * msg)
-  {
-    log(rosserial_msgs::Log::INFO, msg);
-  }
-  void logwarn(const char *msg)
-  {
-    log(rosserial_msgs::Log::WARN, msg);
-  }
-  void logerror(const char*msg)
-  {
-    log(rosserial_msgs::Log::ERROR, msg);
-  }
-  void logfatal(const char*msg)
-  {
-    log(rosserial_msgs::Log::FATAL, msg);
-  }
+  def_log(logdebug, rosserial_msgs::Log::ROSDEBUG)
+  def_log(loginfo, rosserial_msgs::Log::INFO)
+  def_log(logwarn, rosserial_msgs::Log::WARN)
+  def_log(logerror, rosserial_msgs::Log::ERROR)
+  def_log(logfatal, rosserial_msgs::Log::FATAL)
 
   /********************************************************************
    * Parameters
    */
 
-private:
-  bool param_recieved;
-  rosserial_msgs::RequestParamResponse req_param_resp;
+protected:
+  bool param_received{false};
+  eye_display::RequestParamResponse req_param_resp{};
 
   bool requestParam(const char * name, int time_out =  1000)
   {
-    param_recieved = false;
-    rosserial_msgs::RequestParamRequest req;
+    param_received = false;
+    eye_display::RequestParamRequest req;
     req.name  = (char*)name;
     publish(TopicInfo::ID_PARAMETER_REQUEST, &req);
     uint32_t end_time = hardware_.time() + time_out;
-    while (!param_recieved)
+    while (!param_received)
     {
       spinOnce();
       if (hardware_.time() > end_time)
@@ -676,6 +643,41 @@ public:
       {
         logwarn("Failed to get param: length mismatch");
       }
+    }
+    return false;
+  }
+  bool getParam(const char* name, eye_display::KeyValueArray &param, int timeout = 1000)
+  {
+    if (requestParam(name, timeout))
+    {
+      logdebug("getParam(%s, param[]) -> dicts_length=%d", name, req_param_resp.dicts_length);
+      param.values_length = req_param_resp.dicts_length;
+      param.values = (eye_display::KeyValue*)realloc(param.values, param.values_length * sizeof(eye_display::KeyValue));
+      //copy it over
+      for (int i = 0; i < param.values_length; i++)
+      {
+        eye_display::KeyValue *elem = &(param.values[i]);
+        // position of ':'
+        int len = strlen(req_param_resp.dicts[i]);
+        int pos = (strchr(req_param_resp.dicts[i], ':') - (req_param_resp.dicts[i]));
+        if (pos <= 0 or (len-pos) <= 0) {
+          logwarn("Failed to get param: type mismatch");
+          return false;
+        }
+        // elem->key = (char *)realloc((char *)elem->key, (pos+1)*sizeof(char));
+        // elem->value = (char *)realloc((char *)elem->value, (len-pos)*sizeof(char));
+        elem->key = (char *)malloc((pos+1)*sizeof(char));
+        elem->value = (char *)malloc((len-pos)*sizeof(char));
+        memset((char *)elem->key, 0, pos+1);
+        memset((char *)elem->value, 0, len-pos);
+        strncpy((char *)elem->key, req_param_resp.dicts[i], pos);
+        strcpy((char *)elem->value, &(req_param_resp.dicts[i][pos+1]));
+      }
+      return true;
+    }
+    else
+    {
+      logwarn("Failed to get param: length mismatch");
     }
     return false;
   }

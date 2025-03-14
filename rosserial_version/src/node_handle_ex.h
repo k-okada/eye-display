@@ -1,6 +1,7 @@
 #pragma once
 
-#include "ros/node_handle.h"
+#include "../rosserial_ex/node_handle.h"
+#include "eye_display/KeyValueArray.h"
 #include <vector>
 
 namespace ros
@@ -26,8 +27,12 @@ public:
   bool getParam(const char* name, bool* param, int length = 1, int timeout = 1000) {
     return super::getParam(name, param, length, timeout);
   }
+  bool getParam(const char* name, eye_display::KeyValueArray &param, int timeout = 1000) {
+    return super::getParam(name, param, timeout);
+  }
   bool getParam(const char* name, std::vector<std::string> &param, int timeout = 1000) {
     if (!super::requestParam(name, timeout)) return false;
+    logdebug("getParam(%s, param[]) -> string_length=%d", name, super::req_param_resp.strings_length);
     param.resize(super::req_param_resp.strings_length);
     //copy it over
     for (int i = 0; i < super::req_param_resp.strings_length; i++)
@@ -36,11 +41,12 @@ public:
   }
   bool getParam(const char* name, std::string &param, int timeout = 1000) {
     if (!super::requestParam(name, timeout)) return false;
+    logdebug("getParam(%s, param) -> string_length=%d", name, super::req_param_resp.strings_length);
     if (super::req_param_resp.strings_length == 1) {
       param = std::string(super::req_param_resp.strings[0]);
       return true;
     } else {
-      logwarn("Failed to get param: length mismatch");
+      super::logwarn("Failed to get param: length mismatch");
       return false;
     }
   }
