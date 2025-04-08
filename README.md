@@ -46,43 +46,15 @@ https://github.com/user-attachments/assets/e2b44bc5-4f85-489f-b862-e851fd4cdf32
 You can check basic functionalities with a demo firmware.
 
 ```bash
-cd simple_version
-pio run -e stampc3
-pio run -e stampc3 -t uploadfs --upload-port <port to device>
-pio run -e stampc3 -t upload --upload-port <port to device>
+cd rosserial_version
+pio run -e stampc3-ros
+pio run -e stampc3-ros -t uploadfs --upload-port <port to device>
+pio run -e stampc3-ros -t upload --upload-port <port to device>
 ```
-
-Then simple_version will work
 
 Please replace `stampc3` with `stamps3` if you use type 2 device.
 
-### rossserial version (rosserial or I2C)
-
-If you want to control the device with rosserial or I2C, please use `rosserial_version` firmware.
-
-#### How to build and upload
-
-To build the `rosserial_version` firmware, you can use `build.py` script.
-
-This script requires a config yaml file and eye layer images.
-This repo has a sample project, please see [sample_project](./sample_project/).
-
-If you want to build the firmware with the sample project, you can use the following command.
-
-```bash
-roscd eye_display/sample_project
-rosrun eye_display build.py ./sample.yaml --env stampc3 --port <port to device>
-```
-
-(Please replace `stampc3` with `stamps3` if you use type 2 device.)
-
-#### Run demo with a rosserial version
-
-After building and uploading the firmware, you can control the device with rosserial.
-
-This repository has a sample node to control the device.
-
-First, please launch a rosserial node.
+After building and uploading the firmware, you can control the device through ROS topic
 
 ```bash
 roslaunch eye_display demo.launch port:=<port to device> mode_right:=<true or false>
@@ -91,38 +63,33 @@ roslaunch eye_display demo.launch port:=<port to device> mode_right:=<true or fa
 Then you can control the device with the demo scripts.
 
 ```bash
-rosrun eye_display demo_move_eye.py
+rosrun eye_display pub_eye_status.py
 ```
 
 ```bash
-rosrun eye_display pub_eye_status.py
+rosrun eye_display demo_move_eye.py
 ```
+
 
 You can also directly control pupil position by publish a message to "/serial_node/look_at" topic.
 
 ```bash
-rostopic pub -1 /serial_node/look_at geometry_msgs/Point "{x: 1.0, y: 1.0, z: 0.0}"
+rostopic pub -1 /eye_display/look_at geometry_msgs/Point "{x: 40.0, y: -10.0, z: 0.0}"
+
 ```
 
 You can control emotion expression with eye by publishing a message to "/eye_status" topic.
 
 ```bash
-rostopic pub -1 /eye_status std_msgs/UInt16 "data: 0"
+rostopic pub -1 /eye_display/eye_status std_msgs/String "data: 'happy'"
 ```
 
-The following table shows the correspondence between the data and the emotional expression of the eyes.
-Please also see [the message definition](./msg/EyeStatus.msg).
+To get the list of  emotional expression of the eyes, you can use following command.
 
-| data | emotion |
-|---|---|
-|0| normal |
-|1| blink |
-|2| surprised |
-|3| sleepy |
-|4| angry |
-|5| sad / troubled |
-|6| happy |
-
+```bash
+$rosparam get eye_display/eye_asset/names
+[normal, blink, surprised, sleepy, angry, sad, happy]
+```
 
 #### I2C version
 
